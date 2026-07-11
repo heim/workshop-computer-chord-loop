@@ -1,0 +1,172 @@
+name: release
+
+# Chat-/click-driven releases.
+#
+#   Run this workflow (Actions tab, or via an assistant using the
+#   actions_run_trigger MCP) with:
+#     - bump:       patch | minor | major  (default patch) - used when no
+#                   explicit version is given; the new version is computed from
+#                   the latest published release.
+#     - version:    e.g. v1.0.0            - overrides bump if set.
+#     - prerelease: mark the release as a pre-release.
+#   Or push a version tag (git tag v1.0.0 && git push origin v1.0.0).
+#
+# The runner builds the firmware, creates the tag + GitHub Release server-side,
+# attaches chordloop-<version>.uf2, and writes install notes followed by an
+# auto-generated changelog.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (used when 'version' is blank)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Explicit version, e.g. v1.0.0 (overrides bump; blank = auto-bump)"
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark as a pre-release"
+        type: boolean
+        default: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PICO_SDK_VERSION: '2.3.0'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build & run host unit tests
+        run: |
+          chmod +x test/run_tests.sh
+          ./test/run_tests.sh
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib \
+            build-essential libusb-1.0-0-dev pkg-config
+
+      - name: Cache Pico SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_VERSION }}
+
+      - name: Fetch Pico SDK (+ TinyUSB)
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch "$PICO_SDK_VERSION" --depth 1 \
+            https://github.com/raspberrypi/pico-sdk.git pico-sdk
+          git -C pico-sdk submodule update --init --depth 1 lib/tinyusb
+
+      - name: Build firmware
+        env:
+          PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+        run: |
+          cmake -S firmware -B firmware/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build firmware/build --parallel
+
+      - name: Resolve version
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IN_VERSION: ${{ github.event.inputs.version }}
+          IN_BUMP: ${{ github.event.inputs.bump }}
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "$IN_VERSION" ]; then
+            TAG="$IN_VERSION"
+          else
+            LATEST="$(gh release view --json tagName -q .tagName 2>/dev/null || true)"
+            [ -n "$LATEST" ] || LATEST="v0.0.0"
+            v="${LATEST#v}"
+            MAJOR="${v%%.*}"; rest="${v#*.}"; MINOR="${rest%%.*}"; PATCH="${rest#*.}"
+            PATCH="${PATCH%%-*}"
+            MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
+            case "$IN_BUMP" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0;;
+              *)     PATCH=$((PATCH + 1));;
+            esac
+            TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          case "$TAG" in v*) ;; *) TAG="v$TAG";; esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved release version: $TAG"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          EXISTS: ${{ steps.ver.outputs.exists }}
+          PRERELEASE_IN: ${{ github.event.inputs.prerelease }}
+        run: |
+          cp firmware/build/chordloop.uf2 "chordloop-${TAG}.uf2"
+
+          cat > body.md <<'EOF'
+          ## ChordLoop firmware
+
+          Prebuilt UF2 for the Music Thing Modular Workshop System Computer
+          (RP2040 program card). A Turing-Machine-style looping chord
+          progression generator: random shift register decoded into diatonic
+          chords, chord + arpeggiator CV outputs, and an internal stereo pad.
+
+          ### Install (write the card)
+          1. Download the `chordloop-*.uf2` below.
+          2. Pull off the **main knob** at the top of Computer to reveal the
+             recessed **top (BOOTSEL) button**.
+          3. Insert the target card into the program-card slot (any card -
+             printed cards are not write-protected).
+          4. Connect USB-C from Computer's front panel and power-cycle the
+             Workshop System so it connects.
+          5. Hold the **top button**, tap and release the **bottom button** by
+             the card slot, then let go. The `RPI-RP2` drive appears.
+          6. Drag the `.uf2` onto `RPI-RP2`. It reboots running ChordLoop.
+
+          Live control panel: https://heim.github.io/workshop-computer-chord-loop/
+          EOF
+
+          PRE=false
+          [ "$PRERELEASE_IN" = "true" ] && PRE=true
+
+          if [ "$EXISTS" = "true" ]; then
+            echo "Release $TAG already exists - refreshing notes and asset."
+            gh release edit "$TAG" --notes-file body.md
+            gh release upload "$TAG" "chordloop-${TAG}.uf2" --clobber
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="ChordLoop $TAG" \
+              -f body="$(cat body.md)" \
+              -F generate_release_notes=true \
+              -F prerelease="$PRE" >/dev/null
+            gh release upload "$TAG" "chordloop-${TAG}.uf2"
+          fi
+
+          echo "Published ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"

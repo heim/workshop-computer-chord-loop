@@ -1,0 +1,70 @@
+name: build
+
+# Continuous integration: run the host unit tests and build the firmware on
+# every push / PR. Releases are handled separately by release.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PICO_SDK_VERSION: '2.3.0'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build & run host unit tests
+        run: |
+          chmod +x test/run_tests.sh
+          ./test/run_tests.sh
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          # gcc-arm-none-eabi only *recommends* the newlib libraries, so with
+          # --no-install-recommends we must pull libc/libg/libm (and the C++
+          # variant) in explicitly, or linking fails with "cannot find -lc".
+          sudo apt-get install -y --no-install-recommends \
+            cmake gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib \
+            build-essential libusb-1.0-0-dev pkg-config
+
+      - name: Cache Pico SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_VERSION }}
+
+      - name: Fetch Pico SDK (+ TinyUSB)
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch "$PICO_SDK_VERSION" --depth 1 \
+            https://github.com/raspberrypi/pico-sdk.git pico-sdk
+          git -C pico-sdk submodule update --init --depth 1 lib/tinyusb
+
+      - name: Build firmware
+        env:
+          PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+        run: |
+          cmake -S firmware -B firmware/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build firmware/build --parallel
+          arm-none-eabi-size firmware/build/chordloop.elf
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chordloop-uf2
+          path: firmware/build/chordloop.uf2
+          if-no-files-found: error

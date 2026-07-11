@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 430" width="880" height="430" role="img" aria-label="ChordLoop — how the register becomes a chord">
+<rect x="0" y="0" width="880" height="430" rx="14" fill="#0e1116"/>
+<text x="30" y="44" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="22" fill="#e6edf3" text-anchor="start" font-weight="700" letter-spacing="0">ChordLoop — how the register becomes a chord</text>
+<text x="30" y="68" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="13" fill="#8b949e" text-anchor="start" font-weight="400" letter-spacing="0">Each chord clock rotates the register; with probability p a group&#x27;s bits flip to a new chord.</text>
+<text x="40" y="106" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e" text-anchor="start" font-weight="600" letter-spacing="0">16-bit register — 4 groups of 4 bits (length 4)</text>
+<rect x="34" y="114" width="188" height="56" rx="9" fill="none" stroke="#38bdf8" stroke-width="1.5"/>
+<rect x="40" y="120" width="38" height="44" rx="6" fill="#38bdf8" stroke="#2b333e" stroke-width="1"/>
+<text x="59.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<rect x="84" y="120" width="38" height="44" rx="6" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<text x="103.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#8b949e" text-anchor="middle" font-weight="700" letter-spacing="0">0</text>
+<rect x="128" y="120" width="38" height="44" rx="6" fill="#38bdf8" stroke="#2b333e" stroke-width="1"/>
+<text x="147.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<rect x="172" y="120" width="38" height="44" rx="6" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<text x="191.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#8b949e" text-anchor="middle" font-weight="700" letter-spacing="0">0</text>
+<text x="125.0" y="194" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#38bdf8" text-anchor="middle" font-weight="700" letter-spacing="0">= 10</text>
+<rect x="226" y="114" width="188" height="56" rx="9" fill="none" stroke="#fbbf24" stroke-width="1.5"/>
+<rect x="232" y="120" width="38" height="44" rx="6" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<text x="251.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#8b949e" text-anchor="middle" font-weight="700" letter-spacing="0">0</text>
+<rect x="276" y="120" width="38" height="44" rx="6" fill="#fbbf24" stroke="#2b333e" stroke-width="1"/>
+<text x="295.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<rect x="320" y="120" width="38" height="44" rx="6" fill="#fbbf24" stroke="#2b333e" stroke-width="1"/>
+<text x="339.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<rect x="364" y="120" width="38" height="44" rx="6" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<text x="383.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#8b949e" text-anchor="middle" font-weight="700" letter-spacing="0">0</text>
+<text x="317.0" y="194" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#fbbf24" text-anchor="middle" font-weight="700" letter-spacing="0">= 6</text>
+<rect x="418" y="114" width="188" height="56" rx="9" fill="none" stroke="#f472b6" stroke-width="1.5"/>
+<rect x="424" y="120" width="38" height="44" rx="6" fill="#f472b6" stroke="#2b333e" stroke-width="1"/>
+<text x="443.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<rect x="468" y="120" width="38" height="44" rx="6" fill="#f472b6" stroke="#2b333e" stroke-width="1"/>
+<text x="487.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<rect x="512" y="120" width="38" height="44" rx="6" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<text x="531.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#8b949e" text-anchor="middle" font-weight="700" letter-spacing="0">0</text>
+<rect x="556" y="120" width="38" height="44" rx="6" fill="#f472b6" stroke="#2b333e" stroke-width="1"/>
+<text x="575.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<text x="509.0" y="194" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#f472b6" text-anchor="middle" font-weight="700" letter-spacing="0">= 13</text>
+<rect x="610" y="114" width="188" height="56" rx="9" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+<rect x="616" y="120" width="38" height="44" rx="6" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<text x="635.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#8b949e" text-anchor="middle" font-weight="700" letter-spacing="0">0</text>
+<rect x="660" y="120" width="38" height="44" rx="6" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<text x="679.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#8b949e" text-anchor="middle" font-weight="700" letter-spacing="0">0</text>
+<rect x="704" y="120" width="38" height="44" rx="6" fill="#3fb950" stroke="#2b333e" stroke-width="1"/>
+<text x="723.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<rect x="748" y="120" width="38" height="44" rx="6" fill="#3fb950" stroke="#2b333e" stroke-width="1"/>
+<text x="767.0" y="148" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" fill="#0e1116" text-anchor="middle" font-weight="700" letter-spacing="0">1</text>
+<text x="701.0" y="194" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#3fb950" text-anchor="middle" font-weight="700" letter-spacing="0">= 3</text>
+<text x="40" y="262" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e" text-anchor="start" font-weight="600" letter-spacing="0">Group value → degree table (per scale) → ChordDef → notes</text>
+<rect x="40" y="280" width="190" height="58" rx="7" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<rect x="40" y="280" width="4" height="58" rx="2" fill="#fbbf24"/>
+<text x="56" y="304" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12.5" fill="#e6edf3" text-anchor="start" font-weight="600" letter-spacing="0">group value</text>
+<text x="56" y="324" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e" text-anchor="start" font-weight="400" letter-spacing="0">6</text>
+<line x1="232" y1="309" x2="246" y2="309" stroke="#8b949e" stroke-width="2" marker-end="url(#ah2)"/>
+<rect x="246" y="280" width="190" height="58" rx="7" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<rect x="246" y="280" width="4" height="58" rx="2" fill="#a78bfa"/>
+<text x="262" y="304" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12.5" fill="#e6edf3" text-anchor="start" font-weight="600" letter-spacing="0">Major table[6]</text>
+<text x="262" y="324" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e" text-anchor="start" font-weight="400" letter-spacing="0">deg 6 · triad</text>
+<line x1="438" y1="309" x2="452" y2="309" stroke="#8b949e" stroke-width="2" marker-end="url(#ah2)"/>
+<rect x="452" y="280" width="190" height="58" rx="7" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<rect x="452" y="280" width="4" height="58" rx="2" fill="#38bdf8"/>
+<text x="468" y="304" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12.5" fill="#e6edf3" text-anchor="start" font-weight="600" letter-spacing="0">ChordDef</text>
+<text x="468" y="324" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e" text-anchor="start" font-weight="400" letter-spacing="0">{6, triad, 0, 0}</text>
+<line x1="644" y1="309" x2="658" y2="309" stroke="#8b949e" stroke-width="2" marker-end="url(#ah2)"/>
+<rect x="658" y="280" width="190" height="58" rx="7" fill="#1c232d" stroke="#2b333e" stroke-width="1"/>
+<rect x="658" y="280" width="4" height="58" rx="2" fill="#3fb950"/>
+<text x="674" y="304" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12.5" fill="#e6edf3" text-anchor="start" font-weight="600" letter-spacing="0">decode(C, Major)</text>
+<text x="674" y="324" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e" text-anchor="start" font-weight="400" letter-spacing="0">B D F  →  B°</text>
+<defs><marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#8b949e"/></marker></defs>
+<text x="40" y="400" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#8b949e" text-anchor="start" font-weight="500" letter-spacing="0">Because chords are built by stacking scale steps, every mutation is a diatonic chord — never a wrong note.</text>
+</svg>

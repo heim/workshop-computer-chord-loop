@@ -1,0 +1,20 @@
+# Firmware build artifacts
+firmware/build/
+build/
+*.uf2
+*.elf
+*.bin
+*.hex
+*.dis
+*.map
+
+# Local Pico SDK checkouts (CI fetches its own)
+pico-sdk/
+pico-sdk-*/
+
+# Host test binary
+chordloop_tests
+
+# Editor / OS
+.vscode/
+.DS_Store
