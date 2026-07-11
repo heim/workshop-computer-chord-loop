@@ -1,8 +1,9 @@
 name: pages
 
 # Publish the static WebSerial control panel (web/) to GitHub Pages.
-# NOTE: Pages must be enabled once by a repo admin:
+# NOTE: Pages must be enabled once by a repo admin before this can deploy:
 #   Settings -> Pages -> Source: "GitHub Actions".
+# After that, this runs on any push to web/ or can be dispatched manually.
 on:
   push:
     branches: [main]
