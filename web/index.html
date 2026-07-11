@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChordLoop — Workshop Computer</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2b333e;
+    --text:#e6edf3; --dim:#8b949e; --accent:#a78bfa; --accent2:#38bdf8;
+    --gold:#fbbf24; --danger:#f85149; --ok:#3fb950;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel);
+    position:sticky; top:0; z-index:10;
+  }
+  header h1{font-size:18px; margin:0; font-weight:650; letter-spacing:.3px; display:flex; align-items:center; gap:10px}
+  header h1 .logo{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  header h1 small{color:var(--dim); font-weight:400; font-size:13px; margin-left:2px}
+  .spacer{flex:1}
+  .status{display:flex; align-items:center; gap:8px; color:var(--dim); font-size:13px}
+  .dot{width:10px; height:10px; border-radius:50%; background:var(--dim); transition:background .2s}
+  .dot.on{background:var(--ok); box-shadow:0 0 8px var(--ok)}
+  .dot.dirty{background:var(--gold); box-shadow:0 0 8px var(--gold)}
+  button{
+    font:inherit; color:var(--text); background:var(--panel2);
+    border:1px solid var(--line); border-radius:8px; padding:8px 13px;
+    cursor:pointer; transition:background .12s,border-color .12s;
+  }
+  button:hover:not(:disabled){background:#232c38; border-color:#3a4550}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  button.primary{background:#1f6feb; border-color:#1f6feb}
+  button.primary:hover:not(:disabled){background:#388bfd}
+  button.accent{background:#5b3fb4;border-color:#5b3fb4}
+  button.accent:hover:not(:disabled){background:#6d4dd1}
+  select,input[type=number]{
+    font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;padding:5px 7px;
+  }
+  main{max-width:1080px; margin:0 auto; padding:20px}
+  .warn{display:none; margin:0 0 20px; padding:14px 16px; border-radius:10px;
+    background:#3a1f1f; border:1px solid #5a2a2a; color:#ffb4ad;}
+  .warn.show{display:block}
+  .warn code{background:#00000040; padding:1px 6px; border-radius:4px}
+
+  section.card{background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:18px 20px; margin-bottom:20px;}
+  section.card > h2{margin:0 0 14px; font-size:14px; font-weight:600; letter-spacing:.5px;
+    color:var(--dim); text-transform:uppercase;}
+
+  /* progression */
+  .prog{display:flex; gap:10px; flex-wrap:wrap}
+  .step{
+    position:relative; width:104px; min-height:96px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:11px; padding:9px 9px 8px;
+    display:flex; flex-direction:column; gap:6px; transition:border-color .1s, box-shadow .1s;
+  }
+  .step.play{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent), 0 0 14px #a78bfa55}
+  .step.flash{animation:flash .4s ease-out}
+  @keyframes flash{0%{background:#5b3fb4}100%{background:var(--panel2)}}
+  .step .name{font-size:20px; font-weight:650; letter-spacing:.3px; min-height:26px}
+  .step .name .bass{font-size:12px;color:var(--dim);font-weight:400}
+  .step .idx{position:absolute; top:7px; right:9px; font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums}
+  .step select{width:100%; font-size:12px; padding:3px 4px}
+  .step .lock{align-self:flex-start; font-size:12px; padding:2px 8px; border-radius:6px}
+  .step .lock.on{background:#4a3a12; border-color:#6b5518; color:var(--gold)}
+
+  .row{display:flex; gap:18px; flex-wrap:wrap}
+  .col{flex:1; min-width:300px}
+
+  /* table editor */
+  .tbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px}
+  .slots{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px}
+  .slot{background:var(--panel2); border:1px solid var(--line); border-radius:9px; padding:9px}
+  .slot .sname{font-weight:600; margin-bottom:6px; display:flex; justify-content:space-between; align-items:baseline}
+  .slot .sname .num{font-size:11px;color:var(--dim)}
+  .slot .grid{display:grid; grid-template-columns:auto 1fr; gap:4px 7px; align-items:center; font-size:12px}
+  .slot .grid label{color:var(--dim)}
+  .slot select,.slot input{width:100%; padding:3px 5px; font-size:12px}
+  .presets{display:flex; gap:8px; flex-wrap:wrap; margin-top:14px}
+
+  /* config + monitor */
+  .cfg{display:grid; grid-template-columns:auto 1fr auto; gap:11px 12px; align-items:center}
+  .cfg label{color:var(--dim); font-size:13px}
+  .cfg input[type=range]{width:100%; accent-color:var(--accent)}
+  .cfg .v{min-width:34px; text-align:right; font-variant-numeric:tabular-nums; color:var(--dim); font-size:13px}
+  .mon{display:grid; grid-template-columns:auto 1fr; gap:7px 14px; font-size:14px}
+  .mon .k{color:var(--dim)}
+  .mon .val{font-variant-numeric:tabular-nums; font-weight:600}
+  .bits{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing:2px; color:var(--accent2)}
+
+  details.log{margin-top:6px; border:1px solid var(--line); border-radius:10px; background:var(--panel)}
+  details.log summary{cursor:pointer; padding:9px 13px; color:var(--dim); font-size:13px; user-select:none}
+  pre#mon{margin:0; padding:11px 13px; border-top:1px solid var(--line); max-height:160px; overflow:auto;
+    font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:#b8c2cc;}
+  pre#mon .tx{color:var(--accent)} pre#mon .rx{color:var(--dim)}
+  .hint{color:var(--dim); font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="logo"></span>ChordLoop <small>Workshop Computer · WebSerial</small></h1>
+  <div class="spacer"></div>
+  <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">Not connected</span></div>
+  <button id="saveBtn" disabled title="Write current settings to card flash">Save ●<span id="dirtyMark" style="visibility:hidden"></span></button>
+  <button class="primary" id="connectBtn">Connect</button>
+  <button id="disconnectBtn" disabled>Disconnect</button>
+</header>
+
+<main>
+  <div class="warn" id="warn">
+    <strong>Web Serial is not available in this browser.</strong>
+    Use a Chromium desktop browser — <b>Chrome</b>, <b>Edge</b> or <b>Opera</b> —
+    over <code>https://</code> or from a local <code>file://</code>.
+    Firefox and Safari do not support <code>navigator.serial</code>. The card works
+    fully standalone; this panel is optional.
+  </div>
+
+  <section class="card">
+    <h2>Progression <span id="progMeta" class="hint"></span></h2>
+    <div class="prog" id="prog"></div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+      <button id="randBtn" disabled>Re-randomise register</button>
+      <button id="resetBtn" disabled>Reset to step 1</button>
+      <span class="hint">Click a cell's menu to pick a chord from the active table; 🔒 locks a step against mutation.</span>
+    </div>
+  </section>
+
+  <div class="row">
+    <section class="card col" style="flex:2">
+      <h2>Degree table editor</h2>
+      <div class="tbar">
+        <label>Scale <select id="edScale"></select></label>
+        <label>Group <select id="edMode"><option value="4">4-bit (len 2–4)</option><option value="2">2-bit (len 6,8)</option></select></label>
+      </div>
+      <div class="slots" id="slots"></div>
+      <div class="presets">
+        <span class="hint">Presets (this scale &amp; group):</span>
+        <button data-preset="pop">Pop</button>
+        <button data-preset="sad">Sad</button>
+        <button data-preset="jazz">Jazz-ish</button>
+        <button data-preset="modal">Modal drone</button>
+        <button class="accent" data-preset="defaults">Restore defaults (all)</button>
+      </div>
+    </section>
+
+    <section class="card col">
+      <h2>Config &amp; monitor</h2>
+      <div class="cfg">
+        <label>Chord clock ÷</label>
+        <select id="cfgDiv"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>16</option></select>
+        <span></span>
+
+        <label>Arp pattern</label>
+        <select id="cfgArp">
+          <option value="0">Auto (CV in 2)</option>
+          <option value="1">Up</option><option value="2">Down</option>
+          <option value="3">Up-Down</option><option value="4">Random</option><option value="5">Strum</option>
+        </select><span></span>
+
+        <label>Pad voice</label>
+        <select id="cfgPadEn"><option value="1">On</option><option value="0">Off</option></select><span></span>
+
+        <label>Waveform</label>
+        <select id="cfgPadWave"><option value="0">Saw</option><option value="1">Triangle</option></select><span></span>
+
+        <label>Detune</label><input type="range" id="cfgPadDet" min="0" max="25"><span class="v" id="vDet">4</span>
+        <label>Cutoff</label><input type="range" id="cfgPadCut" min="0" max="255"><span class="v" id="vCut">170</span>
+        <label>Width</label><input type="range" id="cfgPadWid" min="0" max="255"><span class="v" id="vWid">160</span>
+      </div>
+
+      <h2 style="margin-top:20px">Monitor</h2>
+      <div class="mon">
+        <span class="k">Tonic</span><span class="val" id="mTonic">—</span>
+        <span class="k">Scale</span><span class="val" id="mScale">—</span>
+        <span class="k">Length</span><span class="val" id="mLen">—</span>
+        <span class="k">Clock</span><span class="val" id="mBpm">—</span>
+        <span class="k">Register</span><span class="val bits" id="mReg">—</span>
+      </div>
+    </section>
+  </div>
+
+  <details class="log"><summary>Serial monitor</summary><pre id="mon"></pre></details>
+</main>
+
+<script>
+"use strict";
+
+// ===== musical constants (mirror of firmware/music_tables) =================
+const NOTE_NAMES = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+const SCALES = [
+  {name:"Major",      iv:[0,2,4,5,7,9,11], len:7},
+  {name:"Nat minor",  iv:[0,2,3,5,7,8,10], len:7},
+  {name:"Harm minor", iv:[0,2,3,5,7,8,11], len:7},
+  {name:"Dorian",     iv:[0,2,3,5,7,9,10], len:7},
+  {name:"Phrygian",   iv:[0,1,3,5,7,8,10], len:7},
+  {name:"Mixolydian", iv:[0,2,4,5,7,9,10], len:7},
+  {name:"Lydian",     iv:[0,2,4,6,7,9,11], len:7},
+  {name:"Min pent",   iv:[0,3,5,7,10],     len:5},
+];
+const CHORD_TYPES = [
+  {name:"triad", steps:[0,2,4]},
+  {name:"7",     steps:[0,2,4,6]},
+  {name:"sus2",  steps:[0,1,4]},
+  {name:"sus4",  steps:[0,3,4]},
+  {name:"6",     steps:[0,2,4,5]},
+  {name:"9",     steps:[0,2,4,6,8]},
+  {name:"5",     steps:[0,4]},
+  {name:"add9",  steps:[0,2,4,8]},
+];
+const LENGTHS = [2,3,4,6,8];
+
+const clamp127 = n => n<0?0:(n>127?127:n);
+
+function scaleStepToSemitone(sc, scaleIndex){
+  const len = SCALES[sc].len;
+  const oct = Math.floor(scaleIndex/len);
+  const idx = scaleIndex - oct*len;
+  return SCALES[sc].iv[idx] + 12*oct;
+}
+function decodeChord(sc, def, tonic){
+  const t = CHORD_TYPES[def.type] || CHORD_TYPES[0];
+  const len = SCALES[sc].len;
+  let root = def.deg % len; if(root<0) root+=len;
+  const base = tonic + (def.oct|0)*12;
+  let tmp = t.steps.map(s => base + scaleStepToSemitone(sc, root+s));
+  const rootNote = tmp[0];
+  let inv = t.steps.length ? ((def.inv|0)%t.steps.length) : 0; if(inv<0) inv=0;
+  for(let k=0;k<inv;k++) tmp[k]+=12;
+  tmp = tmp.slice().sort((a,b)=>a-b);
+  return {notes:tmp.map(clamp127), bass:clamp127(tmp[0]), root:clamp127(rootNote)};
+}
+function noteName(m){ return NOTE_NAMES[((m%12)+12)%12] + (Math.floor(m/12)-1); }
+function chordName(sc, def, tonic){
+  const d = decodeChord(sc, def, tonic);
+  const rn = NOTE_NAMES[((d.root%12)+12)%12];
+  const iv = new Set(d.notes.map(n => (((n-d.root)%12)+12)%12));
+  const has = x => iv.has(x);
+  let third = has(4)?"maj":has(3)?"min":has(2)?"sus2":has(5)?"sus4":"no3";
+  let q = "";
+  if(third==="min") q="m"; else if(third==="sus2") q="sus2"; else if(third==="sus4") q="sus4";
+  if(third==="min" && has(6) && !has(10) && !has(11)) q="dim";
+  else if(has(6) && !has(7)) q+="♭5";
+  if(has(10)) q+="7"; else if(has(11)) q+="maj7";
+  else if(has(9) && third!=="sus2" && third!=="sus4") q+="6";
+  if(third==="no3" && has(7)) q = (q||"") + "5";
+  return {name: rn+q, bass:d.bass, root:d.root, isInv:d.bass!==d.root};
+}
+
+// ===== state ===============================================================
+const state = {
+  ver:1, scale:0, len:8, reg:0, lock:0, step:0, tonic:48, bpmX10:0,
+  cfg:{div:8, arp:0, padEn:1, padWave:0, padDet:4, padCut:170, padWid:160},
+  t2:null, t4:null, haveState:false,
+};
+function groupSize(){ return state.len<=4 ? 4 : 2; }
+function activeTable(sc){ return groupSize()===2 ? state.t2[sc] : state.t4[sc]; }
+
+// ===== serial plumbing (Chromium Web Serial) ===============================
+let port=null, reader=null, writer=null, keepReading=false, rxBuf="";
+let writeChain = Promise.resolve();
+const enc = new TextEncoder();
+const $ = id => document.getElementById(id);
+
+function log(kind,text){
+  const mon=$("mon"), s=document.createElement("span");
+  s.className=kind; s.textContent=(kind==="tx"?"» ":"« ")+text+"\n";
+  mon.appendChild(s);
+  while(mon.childNodes.length>200) mon.removeChild(mon.firstChild);
+  mon.scrollTop=mon.scrollHeight;
+}
+function send(obj){
+  if(!writer) return;
+  const line = JSON.stringify(obj);
+  log("tx", line);
+  const data = enc.encode(line+"\n");
+  writeChain = writeChain.then(()=>writer.write(data)).catch(e=>console.warn("write failed",e));
+  return writeChain;
+}
+async function connect(){
+  if(!("serial" in navigator)) return;
+  try{
+    port = await navigator.serial.requestPort();
+    await port.open({baudRate:115200});
+  }catch(err){ if(err && err.name!=="NotFoundError") console.warn(err); port=null; return; }
+  writer = port.writable.getWriter();
+  keepReading = true;
+  setConnected(true);
+  readLoop();
+  send({c:"hello"});
+}
+async function disconnect(){
+  keepReading=false;
+  try{ if(reader) await reader.cancel(); }catch(e){}
+  try{ if(writer){ await writeChain.catch(()=>{}); writer.releaseLock(); } }catch(e){}
+  try{ if(port) await port.close(); }catch(e){}
+  reader=writer=port=null; rxBuf="";
+  setConnected(false);
+}
+async function readLoop(){
+  const dec = new TextDecoder();
+  try{
+    reader = port.readable.getReader();
+    while(keepReading){
+      const {value,done} = await reader.read();
+      if(done) break;
+      rxBuf += dec.decode(value,{stream:true});
+      let nl;
+      while((nl=rxBuf.indexOf("\n"))>=0){
+        const line = rxBuf.slice(0,nl).trim();
+        rxBuf = rxBuf.slice(nl+1);
+        if(line) handleLine(line);
+      }
+    }
+  }catch(err){ console.warn("read loop ended",err); }
+  finally{ try{ reader&&reader.releaseLock(); }catch(e){} if(keepReading) disconnect(); }
+}
+
+// ===== incoming messages ===================================================
+function handleLine(line){
+  let o; try{ o=JSON.parse(line); }catch(e){ return; }
+  if(!o || typeof o!=="object") return;
+  log("rx", line.length>120 ? line.slice(0,117)+"…" : line);
+  if(o.c==="state") onState(o);
+  else if(o.c==="live") onLive(o);
+  else if(o.c==="saved"){ setDirty(false); }
+}
+function onState(o){
+  state.ver=o.ver; state.scale=o.scale; state.len=o.len; state.reg=o.reg>>>0;
+  state.lock=o.lock>>>0; state.tonic=o.tonic;
+  Object.assign(state.cfg, o.cfg||{});
+  state.t2=o.t2; state.t4=o.t4; state.haveState=true;
+  syncCfgControls();
+  buildScaleOptions();
+  renderAll();
+  setDirty(false);
+}
+let flashUntil=0;
+function onLive(o){
+  state.reg=o.reg>>>0; state.step=o.step; state.tonic=o.tonic;
+  state.scale=o.scale; state.len=o.len;
+  state.bpmX10 = Math.round((o.bpm||0)*10);
+  if(o.mut) flashUntil = performance.now()+380;
+  scheduleRender();
+}
+
+// ===== rendering ===========================================================
+let pending=false;
+function scheduleRender(){ if(pending) return; pending=true; requestAnimationFrame(()=>{pending=false; renderProg(); renderMonitor();}); }
+function renderAll(){ renderProg(); renderMonitor(); renderTableEditor(); }
+
+function renderProg(){
+  if(!state.haveState) return;
+  const host=$("prog"), gs=groupSize(), n=state.len, tbl=activeTable(state.scale);
+  const mask=(1<<gs)-1;
+  $("progMeta").textContent = `· ${SCALES[state.scale].name} · ${n} steps · ${gs}-bit groups`;
+  // rebuild only if step count changed
+  if(host.childElementCount!==n){ host.innerHTML=""; for(let i=0;i<n;i++) host.appendChild(makeStepCell(i)); }
+  const flashing = performance.now()<flashUntil;
+  for(let i=0;i<n;i++){
+    const cell=host.children[i];
+    const v=(state.reg>>>(i*gs))&mask;
+    const def=tbl[v];
+    const info=chordName(state.scale, {deg:def[0],type:def[1],inv:def[2],oct:def[3]}, state.tonic);
+    const nameEl=cell.querySelector(".name");
+    nameEl.innerHTML = info.name + (info.isInv?` <span class="bass">/${NOTE_NAMES[info.bass%12]}</span>`:"");
+    const sel=cell.querySelector("select");
+    if(document.activeElement!==sel){ rebuildStepOptions(sel,tbl); sel.value=String(v); }
+    const lockBtn=cell.querySelector(".lock");
+    const locked=((state.lock>>>i)&1)===1;
+    lockBtn.classList.toggle("on",locked);
+    lockBtn.textContent = locked?"🔒":"🔓";
+    cell.classList.toggle("play", i===state.step);
+    if(flashing) cell.classList.add("flash"); else cell.classList.remove("flash");
+  }
+}
+function makeStepCell(i){
+  const d=document.createElement("div"); d.className="step";
+  d.innerHTML=`<span class="idx">${i+1}</span><span class="name"></span><select></select><button class="lock">🔓</button>`;
+  const sel=d.querySelector("select");
+  sel.addEventListener("change",()=>{
+    const v=parseInt(sel.value,10);
+    setRegStep(i,v); send({c:"setStep",i,v}); scheduleRender();
+  });
+  d.querySelector(".lock").addEventListener("click",()=>{
+    const on=(((state.lock>>>i)&1)===0);
+    if(on) state.lock|=(1<<i); else state.lock&=~(1<<i);
+    send({c:"lock",i,on}); scheduleRender();
+  });
+  return d;
+}
+function rebuildStepOptions(sel,tbl){
+  const want = tbl.length;
+  if(sel.childElementCount===want && sel.dataset.sc==state.scale && sel.dataset.gs==groupSize()) return;
+  sel.innerHTML=""; sel.dataset.sc=state.scale; sel.dataset.gs=groupSize();
+  tbl.forEach((def,idx)=>{
+    const o=document.createElement("option"); o.value=idx;
+    o.textContent = idx+": "+chordName(state.scale,{deg:def[0],type:def[1],inv:def[2],oct:def[3]},state.tonic).name;
+    sel.appendChild(o);
+  });
+}
+function setRegStep(i,v){
+  const gs=groupSize(), shift=i*gs, mask=((1<<gs)-1)<<shift;
+  state.reg = ((state.reg & ~mask) | ((v<<shift)&mask))>>>0;
+}
+
+function renderMonitor(){
+  $("mTonic").textContent = noteName(state.tonic);
+  $("mScale").textContent = SCALES[state.scale] ? SCALES[state.scale].name : "—";
+  $("mLen").textContent = state.len+" steps";
+  $("mBpm").textContent = state.bpmX10>0 ? (state.bpmX10/10).toFixed(1)+" (pulse)" : "— (no clock)";
+  const bits = (state.reg>>>0).toString(2).padStart(16,"0").replace(/(.{4})(?=.)/g,"$1 ");
+  $("mReg").textContent = bits;
+}
+
+// ===== table editor ========================================================
+function buildScaleOptions(){
+  const es=$("edScale");
+  if(es.childElementCount!==SCALES.length){
+    es.innerHTML=""; SCALES.forEach((s,i)=>{ const o=document.createElement("option"); o.value=i; o.textContent=s.name; es.appendChild(o); });
+  }
+}
+function editorScale(){ return parseInt($("edScale").value||"0",10); }
+function editorMode(){ return parseInt($("edMode").value||"4",10); }
+
+function renderTableEditor(){
+  if(!state.haveState) return;
+  const sc=editorScale(), mode=editorMode();
+  const tbl = mode===2 ? state.t2[sc] : state.t4[sc];
+  const host=$("slots"); host.innerHTML="";
+  const len=SCALES[sc].len;
+  tbl.forEach((def,slot)=>{
+    const cell=document.createElement("div"); cell.className="slot";
+    const nm=chordName(sc,{deg:def[0],type:def[1],inv:def[2],oct:def[3]},60).name;
+    cell.innerHTML=`<div class="sname">${nm}<span class="num">#${slot}</span></div><div class="grid"></div>`;
+    const g=cell.querySelector(".grid");
+    g.appendChild(field("Deg", selNum(0,len-1,def[0], v=>editSlot(sc,mode,slot,0,v))));
+    g.appendChild(field("Type", selOpts(CHORD_TYPES.map((t,i)=>[i,t.name]),def[1], v=>editSlot(sc,mode,slot,1,v))));
+    g.appendChild(field("Inv", selNum(0,3,def[2], v=>editSlot(sc,mode,slot,2,v))));
+    g.appendChild(field("Oct", selOpts([[-1,"-1"],[0,"0"],[1,"+1"]],def[3], v=>editSlot(sc,mode,slot,3,v))));
+    host.appendChild(cell);
+  });
+}
+function field(label,ctrl){
+  const l=document.createElement("label"); l.textContent=label;
+  const frag=document.createDocumentFragment(); frag.appendChild(l); frag.appendChild(ctrl); return frag;
+}
+function selNum(min,max,val,cb){ const a=[]; for(let i=min;i<=max;i++) a.push([i,String(i)]); return selOpts(a,val,cb); }
+function selOpts(pairs,val,cb){
+  const s=document.createElement("select");
+  pairs.forEach(([v,t])=>{ const o=document.createElement("option"); o.value=v; o.textContent=t; if(v===val) o.selected=true; s.appendChild(o); });
+  s.addEventListener("change",()=>cb(parseInt(s.value,10)));
+  return s;
+}
+function editSlot(sc,mode,slot,field,value){
+  const tbl = mode===2 ? state.t2[sc] : state.t4[sc];
+  tbl[slot][field]=value;
+  const d=tbl[slot];
+  send({c:"table",scale:sc,mode,slot,deg:d[0],type:d[1],inv:d[2],oct:d[3]});
+  setDirty(true);
+  renderTableEditor(); renderProg();
+}
+
+// presets: [degree,type,inv,oct] rows applied to the current scale+group
+const PRESETS={
+  pop:  [[0,0,0,0],[4,0,0,0],[5,0,0,0],[3,0,0,0]],
+  sad:  [[0,0,0,0],[5,0,0,0],[2,0,0,0],[3,0,0,0]],
+  jazz: [[1,1,0,0],[4,1,0,0],[0,1,0,0],[5,1,0,0]],
+  modal:[[0,6,0,0],[0,7,0,0],[3,6,0,0],[0,6,0,1]],
+};
+function applyPreset(name){
+  if(name==="defaults"){ send({c:"defaults"}); setDirty(true); setTimeout(()=>send({c:"hello"}),120); return; }
+  const rows=PRESETS[name]; if(!rows) return;
+  const sc=editorScale(), mode=editorMode();
+  const tbl = mode===2 ? state.t2[sc] : state.t4[sc];
+  for(let slot=0;slot<tbl.length;slot++){
+    const r=rows[slot%rows.length];
+    tbl[slot]=[r[0],r[1],r[2],r[3]];
+    send({c:"table",scale:sc,mode,slot,deg:r[0],type:r[1],inv:r[2],oct:r[3]});
+  }
+  setDirty(true); renderTableEditor(); renderProg();
+}
+
+// ===== config controls =====================================================
+function syncCfgControls(){
+  $("cfgDiv").value=String(state.cfg.div);
+  $("cfgArp").value=String(state.cfg.arp);
+  $("cfgPadEn").value=String(state.cfg.padEn);
+  $("cfgPadWave").value=String(state.cfg.padWave);
+  $("cfgPadDet").value=state.cfg.padDet; $("vDet").textContent=state.cfg.padDet;
+  $("cfgPadCut").value=state.cfg.padCut; $("vCut").textContent=state.cfg.padCut;
+  $("cfgPadWid").value=state.cfg.padWid; $("vWid").textContent=state.cfg.padWid;
+}
+function wireCfg(){
+  $("cfgDiv").addEventListener("change",e=>{ state.cfg.div=+e.target.value; send({c:"cfg",div:state.cfg.div}); setDirty(true); });
+  $("cfgArp").addEventListener("change",e=>{ state.cfg.arp=+e.target.value; send({c:"cfg",arp:state.cfg.arp}); setDirty(true); });
+  $("cfgPadEn").addEventListener("change",e=>{ state.cfg.padEn=+e.target.value; send({c:"cfg",padEn:state.cfg.padEn}); setDirty(true); });
+  $("cfgPadWave").addEventListener("change",e=>{ state.cfg.padWave=+e.target.value; send({c:"cfg",padWave:state.cfg.padWave}); setDirty(true); });
+  const slider=(id,key,vid,jkey)=>$(id).addEventListener("input",e=>{ const v=+e.target.value; state.cfg[key]=v; $(vid).textContent=v; send({c:"cfg",[jkey]:v}); setDirty(true); });
+  slider("cfgPadDet","padDet","vDet","padDet");
+  slider("cfgPadCut","padCut","vCut","padCut");
+  slider("cfgPadWid","padWid","vWid","padWid");
+}
+
+// ===== connection / dirty UI ===============================================
+function setConnected(on){
+  $("statusDot").classList.toggle("on",on);
+  $("statusText").textContent = on?"Connected":"Not connected";
+  $("connectBtn").disabled=on; $("disconnectBtn").disabled=!on;
+  $("saveBtn").disabled=!on; $("randBtn").disabled=!on; $("resetBtn").disabled=!on;
+  if(!on){ state.haveState=false; $("statusDot").classList.remove("dirty"); }
+}
+let dirty=false;
+function setDirty(d){ dirty=d; const dot=$("statusDot"); if(dot.classList.contains("on")) dot.classList.toggle("dirty",d);
+  $("saveBtn").textContent = d? "Save •" : "Saved"; }
+
+// ===== wire up =============================================================
+$("connectBtn").addEventListener("click",connect);
+$("disconnectBtn").addEventListener("click",disconnect);
+$("saveBtn").addEventListener("click",()=>send({c:"save"}));
+$("randBtn").addEventListener("click",()=>send({c:"randomize"}));
+$("resetBtn").addEventListener("click",()=>send({c:"reset"}));
+$("edScale").addEventListener("change",()=>renderTableEditor());
+$("edMode").addEventListener("change",()=>renderTableEditor());
+document.querySelectorAll(".presets button").forEach(b=>b.addEventListener("click",()=>applyPreset(b.dataset.preset)));
+wireCfg();
+
+if(!("serial" in navigator)){
+  $("warn").classList.add("show");
+  $("connectBtn").disabled=true;
+}else{
+  setConnected(false);
+  navigator.serial.addEventListener("disconnect",e=>{ if(port && e.target===port) disconnect(); });
+}
+</script>
+</body>
+</html>
