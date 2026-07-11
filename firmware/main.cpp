@@ -14,7 +14,7 @@
 //   Knob X    : progression length  {2,3,4,6,8}
 //   Knob Y    : scale               {Major, Nat/Harm minor, modes, min pent}
 //   Switch Up : hard lock (freeze the loop, overrides knob)
-//   Switch Dn : (momentary) re-randomise the whole register
+//   Switch Dn : (momentary, debounced) re-randomise the whole register
 //   CV In 1   : tonic (1V/oct, quantised, updated on chord boundaries)
 //   CV In 2   : arp pattern select (5 zones: up/down/updown/random/strum)
 //   Pulse In 1: clock       Pulse In 2: reset progression to step 0
@@ -24,11 +24,22 @@
 //   LEDs      : left column = 3-bit step counter; right column = chord/arp
 //               pulses; all six flash 50 ms when a mutation flips bits
 //
+// Timing design (learned the hard way - see README "Notes"):
+//   ProcessSample() runs in a 48 kHz ISR with a hard ~3000-cycle budget at
+//   144 MHz. If it overruns, ComputerCard's ADC multiplexer sequencing degrades
+//   and knob/switch/CV readings bleed into each other (symptoms: phantom
+//   switch-down randomise, knobs stuck/reading mid-scale, tonic jumps). So:
+//     * the whole binary is copied to RAM (no XIP stalls in the ISR),
+//     * the ISR only ever copies a ~20-byte live snapshot to core1 - the big
+//       table/config state lives on core1, which owns all edits anyway,
+//     * the momentary-down randomise is level-debounced, and CV jack detection
+//       must be stable for 50 ms before a CV input is trusted.
+//
 // USB control panel (WebSerial) is additive - the card is fully usable
 // standalone. The entire USB stack (raw TinyUSB CDC) runs on core1; the 48 kHz
 // audio ISR owns core0 and is never blocked. Cross-core data is lock-free:
 //   core1 -> core0 : a single-producer/single-consumer command ring
-//   core0 -> core1 : seqlock snapshots (a compact live frame + a full state)
+//   core0 -> core1 : a seqlock'd compact live snapshot
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -49,7 +60,7 @@
 using namespace chordloop;
 
 // Data-memory barrier. Cortex-M0+ is in-order, but this stops the compiler from
-// reordering the value/index writes in the ring and seqlocks. Portable so the
+// reordering the value/index writes in the ring and seqlock. Portable so the
 // host tests (which include none of this file) still model the intent.
 static inline void mem_barrier() {
 #if defined(__arm__) || defined(__ARM_ARCH)
@@ -60,6 +71,10 @@ static inline void mem_barrier() {
 }
 
 static inline int clampMidi(int n) { return n < 0 ? 0 : (n > 127 ? 127 : n); }
+
+// Clamp a cfg field into a valid Config. Shared by core0 (live config) and
+// core1 (the persisted mirror) so both always hold identical, sane values.
+static void sanitizeCfgField(Config &c, int field, int value);
 
 // ===========================================================================
 // Cross-core shared state
@@ -96,7 +111,13 @@ inline bool popCmd(CmdMsg &m) {
 }
 
 // --- core0 -> core1 : compact live snapshot (seqlock) ----------------------
-struct LiveSnap { uint16_t reg; int16_t step, tonic, scale, len, bpmX10; uint8_t mut; };
+// ~20 bytes. This is the ONLY state core0 publishes; everything bigger
+// (degree tables, config) is owned by core1.
+struct LiveSnap {
+    uint16_t reg, lock;
+    int16_t  step, tonic, scale, len, bpmX10;
+    uint8_t  mut;
+};
 volatile uint32_t liveSeq = 0;
 LiveSnap liveData = {};
 
@@ -115,25 +136,6 @@ inline bool readLive(LiveSnap &out, uint32_t &seqOut) {
     return false;
 }
 
-// --- core0 -> core1 : full state snapshot (seqlock, published on edits) -----
-volatile uint32_t fullSeq = 0;
-FullState fullData = {};
-
-inline void publishFull(const FullState &s) {
-    uint32_t v = fullSeq + 1u;
-    fullSeq = v; mem_barrier();
-    fullData = s;
-    mem_barrier(); fullSeq = v + 1u;
-}
-inline bool readFull(FullState &out, uint32_t &seqOut) {
-    for (int i = 0; i < 8; ++i) {
-        uint32_t s1 = fullSeq; if (s1 & 1u) continue;
-        mem_barrier(); out = fullData; mem_barrier();
-        if (fullSeq == s1) { seqOut = s1; return true; }
-    }
-    return false;
-}
-
 // command type ids carried in CmdMsg.type
 enum { C_SETSTEP=1, C_LOCK, C_TABLE, C_CFG, C_RANDOMIZE, C_RESET, C_DEFAULTS };
 // cfg field ids carried in CmdMsg.a for C_CFG
@@ -141,61 +143,90 @@ enum { CF_DIV=0, CF_ARP, CF_PADEN, CF_PADWAVE, CF_PADDET, CF_PADCUT, CF_PADWID }
 
 } // namespace shared
 
+static void sanitizeCfgField(Config &c, int field, int value) {
+    switch (field) {
+    case shared::CF_DIV:     c.chordClockDiv = sanitizeClockDiv((uint8_t)value); break;
+    case shared::CF_ARP:     c.arpPatternOverride = (value < 0 || value > 5) ? 0 : (uint8_t)value; break;
+    case shared::CF_PADEN:   c.padEnabled = value ? 1 : 0; break;
+    case shared::CF_PADWAVE: c.padWaveform = value ? 1 : 0; break;
+    case shared::CF_PADDET:  c.padDetuneCents = (uint8_t)(value < 0 ? 0 : (value > 50 ? 50 : value)); break;
+    case shared::CF_PADCUT:  c.padCutoff = (uint8_t)(value < 0 ? 0 : (value > 255 ? 255 : value)); break;
+    case shared::CF_PADWID:  c.padWidth = (uint8_t)(value < 0 ? 0 : (value > 255 ? 255 : value)); break;
+    default: break;
+    }
+}
+
+// Boot-time persisted state, loaded once on core0 in main() before core1
+// starts; seeds both the card (core0) and the web/save mirror (core1).
+static PersistState g_boot;
+
 // ===========================================================================
-// The card
+// The card (core0)
 // ===========================================================================
 class ChordLoopCard : public ComputerCard {
 public:
-    ChordLoopCard() {
+    explicit ChordLoopCard(const PersistState &boot) {
         uint64_t uid = UniqueCardID();
         engine_.init((uint32_t)(uid ^ (uid >> 32)) | 1u);
         arp_.init((uint32_t)(uid >> 16) | 1u);
         pad_.init();
 
-        // Load persisted settings, else compiled-in defaults.
-        PersistState ps;
-        if (!loadPersistFromFlash(ps)) loadDefaultPersist(ps);
-        config_ = ps.config;
-        engine_.setReg(ps.reg);
-        engine_.setLockMask(ps.lockMask);
+        config_ = boot.config;
+        engine_.setReg(boot.reg);
+        engine_.setLockMask(boot.lockMask);
         for (int s = 0; s < kNumScales; ++s) {
-            for (int i = 0; i < k2BitTableLen; ++i) engine_.table2_[s][i] = ps.table2[s][i];
-            for (int i = 0; i < k4BitTableLen; ++i) engine_.table4_[s][i] = ps.table4[s][i];
+            for (int i = 0; i < k2BitTableLen; ++i) engine_.table2_[s][i] = boot.table2[s][i];
+            for (int i = 0; i < k4BitTableLen; ++i) engine_.table4_[s][i] = boot.table4[s][i];
         }
         applyPadParams();
 
         engine_.quantizeTonic(0);       // establish a tonic before the first clock
         curChord_ = engine_.currentChord();
         pad_.setChord(curChord_);
-        publishFullSnapshot();
+        publishLiveSnapshot();          // core1 reads a valid snapshot from its first loop
     }
 
     virtual void ProcessSample() override {
         ++animCounter_;
         if (samplesSinceClock_ < 0x3fffffff) ++samplesSinceClock_;
+        if (settle_ > 0) --settle_;
 
-        bool structural = drainCommands();
+        bool changed = drainCommands();
 
-        // --- knobs (always live) ---
+        // --- knobs (always live; zones settle without hysteresis at boot) ---
         engine_.setProbabilityKnob(KnobVal(Knob::Main));
         int li = zoneHyst(KnobVal(Knob::X), kNumLengths, 1);
-        if (li != engine_.lengthIndex()) { engine_.setLengthIndex(li); structural = true; }
+        if (li != engine_.lengthIndex()) { engine_.setLengthIndex(li); changed = true; }
         int sc = zoneHyst(KnobVal(Knob::Y), kNumScales, 2);
-        if (sc != engine_.scale()) { engine_.setScale(sc); structural = true; }
+        if (sc != engine_.scale()) { engine_.setScale(sc); changed = true; }
 
         // --- switch Z ---
+        // Up = hard lock (level, ADC-smoothed upstream). Down = momentary
+        // randomise, debounced: it must read Down for 10 ms straight before it
+        // fires once, so a single glitched mux sample can never scramble the
+        // register behind the user's back.
         Switch sw = SwitchVal();
         engine_.setHardLock(sw == Up);
-        if (SwitchChanged() && sw == Down) { engine_.randomizeRegister(); structural = true; }
+        if (sw == Down) {
+            if (downCount_ <= kDownDebounce) ++downCount_;
+            if (downCount_ == kDownDebounce) { engine_.randomizeRegister(); changed = true; }
+        } else {
+            downCount_ = 0;
+        }
 
         // --- reset ---
-        if (PulseIn2RisingEdge()) { engine_.resetStep(); liveDirty_ = true; }
+        if (PulseIn2RisingEdge()) { engine_.resetStep(); changed = true; }
+
+        // --- CV jack stability: trust a CV input only after its jack has read
+        // as connected for 50 ms straight (normalisation-probe flicker guard).
+        cv1Stable_ = Connected(Input::CV1) ? (cv1Stable_ < 60000 ? cv1Stable_ + 1 : cv1Stable_) : 0;
+        cv2Stable_ = Connected(Input::CV2) ? (cv2Stable_ < 60000 ? cv2Stable_ + 1 : cv2Stable_) : 0;
 
         // --- arp pattern selection ---
         int arpPat;
-        if (config_.arpPatternOverride) arpPat = config_.arpPatternOverride - 1;
-        else if (Connected(Input::CV2))  arpPat = Arp::patternFromCV(CVIn2());
-        else                             arpPat = ARP_UP;
+        if (config_.arpPatternOverride)      arpPat = config_.arpPatternOverride - 1;
+        else if (cv2Stable_ >= kConnStable)  arpPat = Arp::patternFromCV(CVIn2());
+        else                                 arpPat = ARP_UP;
         arp_.setPattern(arpPat);
 
         // --- clock ---
@@ -207,7 +238,7 @@ public:
             ++clockCounter_;
             uint8_t div = config_.chordClockDiv ? config_.chordClockDiv : 1;
             if (clockCounter_ % div == 0) {
-                int tonicCV = Disconnected(Input::CV1) ? 0 : CVIn1();
+                int tonicCV = (cv1Stable_ >= kConnStable) ? CVIn1() : 0;
                 engine_.quantizeTonic(tonicCV);
                 engine_.onChordClock();
                 curChord_ = engine_.currentChord();
@@ -216,13 +247,12 @@ public:
                 chordPulse_ = kChordPulseSamples;
                 if (engine_.mutatedThisClock()) mutFlash_ = kMutationFlashSamples;
                 CVOut1MIDINote((uint8_t)clampMidi(curChord_.bass));
-                structural = true;
             }
 
             int arpNote = arp_.step(curChord_);
             CVOut2MIDINote((uint8_t)clampMidi(arpNote));
             arpPulse_ = kArpPulseSamples;
-            liveDirty_ = true;
+            changed = true;
         }
 
         // --- internal pad voice ---
@@ -239,13 +269,15 @@ public:
 
         updateLeds(sw);
 
-        // --- publish to core1 ---
-        if (liveDirty_) { publishLiveSnapshot(); liveDirty_ = false; }
-        if (structural) { publishFullSnapshot(); }
+        // --- publish to core1: on any change, plus a ~10 ms heartbeat so the
+        // web monitor tracks knob turns even between clocks.
+        if (changed || (animCounter_ & 511) == 0) publishLiveSnapshot();
     }
 
 private:
-    static constexpr int kPickup = 128; // knob-zone hysteresis margin (of 4096)
+    static constexpr int kPickup       = 128;              // knob-zone hysteresis margin (of 4096)
+    static constexpr int kDownDebounce = kSampleRate / 100; // 10 ms of solid Down
+    static constexpr int kConnStable   = kSampleRate / 20;  // 50 ms of solid jack detect
 
     ChordEngine engine_;
     Arp         arp_;
@@ -257,7 +289,9 @@ private:
     int  samplesSinceClock_ = 0x3fffffff;
     int  clockPeriod_ = 0;
     int  chordPulse_ = 0, arpPulse_ = 0, mutFlash_ = 0;
-    bool liveDirty_ = true;
+    int  downCount_ = 0;
+    int  cv1Stable_ = 0, cv2Stable_ = 0;
+    int  settle_ = kSampleRate / 2;   // 0.5 s: knob smoothing ramps from 0 at boot
     uint32_t animCounter_ = 0;
     int  lastZone_[3] = {-1, -1, -1};
 
@@ -267,12 +301,13 @@ private:
     }
 
     // Knob -> zone with a little hysteresis so a knob resting on a boundary does
-    // not chatter between two scales / lengths.
+    // not chatter between two scales / lengths. During the boot settle window
+    // the zone simply tracks the (still-ramping) smoothed value.
     int zoneHyst(int32_t raw, int zones, int idx) {
         int val = (raw * zones) >> 12;
         if (val >= zones) val = zones - 1;
         if (val < 0) val = 0;
-        if (lastZone_[idx] < 0) { lastZone_[idx] = val; return val; }
+        if (settle_ > 0 || lastZone_[idx] < 0) { lastZone_[idx] = val; return val; }
         if (val != lastZone_[idx]) {
             int32_t zoneSize = 4096 / zones;
             int32_t center = lastZone_[idx] * zoneSize + zoneSize / 2;
@@ -283,47 +318,34 @@ private:
     }
 
     bool drainCommands() {
-        bool structural = false;
+        bool changed = false;
         shared::CmdMsg m;
         int guard = 0;
         while (shared::popCmd(m) && guard++ < 128) {
             switch (m.type) {
-            case shared::C_SETSTEP: engine_.setStepValue(m.a, m.b); structural = true; break;
-            case shared::C_LOCK:    engine_.setLock(m.a, m.b != 0); structural = true; break;
+            case shared::C_SETSTEP: engine_.setStepValue(m.a, m.b); changed = true; break;
+            case shared::C_LOCK:    engine_.setLock(m.a, m.b != 0); changed = true; break;
             case shared::C_TABLE: {
                 ChordDef *slot = engine_.tableSlot(m.a, m.b, m.c);
                 if (slot) {
                     slot->degree = (uint8_t)m.d; slot->type = (uint8_t)m.e;
                     slot->inversion = (int8_t)m.f; slot->octave = (int8_t)m.g;
                 }
-                structural = true;
+                changed = true;
                 break;
             }
             case shared::C_CFG:
-                applyCfg(m.a, m.b);
-                structural = true;
+                sanitizeCfgField(config_, m.a, m.b);
+                applyPadParams();
+                changed = true;
                 break;
-            case shared::C_RANDOMIZE: engine_.randomizeRegister(); structural = true; break;
-            case shared::C_RESET:     engine_.resetStep();         liveDirty_ = true;  break;
-            case shared::C_DEFAULTS:  engine_.loadDefaultTables(); structural = true; break;
+            case shared::C_RANDOMIZE: engine_.randomizeRegister(); changed = true; break;
+            case shared::C_RESET:     engine_.resetStep();         changed = true; break;
+            case shared::C_DEFAULTS:  engine_.loadDefaultTables(); changed = true; break;
             default: break;
             }
         }
-        return structural;
-    }
-
-    void applyCfg(int field, int value) {
-        switch (field) {
-        case shared::CF_DIV:     config_.chordClockDiv = sanitizeClockDiv((uint8_t)value); break;
-        case shared::CF_ARP:     config_.arpPatternOverride = (value < 0 || value > 5) ? 0 : (uint8_t)value; break;
-        case shared::CF_PADEN:   config_.padEnabled = value ? 1 : 0; break;
-        case shared::CF_PADWAVE: config_.padWaveform = value ? 1 : 0; break;
-        case shared::CF_PADDET:  config_.padDetuneCents = (uint8_t)(value < 0 ? 0 : (value > 50 ? 50 : value)); break;
-        case shared::CF_PADCUT:  config_.padCutoff = (uint8_t)(value < 0 ? 0 : (value > 255 ? 255 : value)); break;
-        case shared::CF_PADWID:  config_.padWidth = (uint8_t)(value < 0 ? 0 : (value > 255 ? 255 : value)); break;
-        default: break;
-        }
-        applyPadParams();
+        return changed;
     }
 
     void updateLeds(Switch sw) {
@@ -350,50 +372,62 @@ private:
 
     void publishLiveSnapshot() {
         shared::LiveSnap s;
-        s.reg   = engine_.reg();
-        s.step  = (int16_t)engine_.step();
-        s.tonic = (int16_t)engine_.tonic();
-        s.scale = (int16_t)engine_.scale();
-        s.len   = (int16_t)engine_.length();
+        s.reg    = engine_.reg();
+        s.lock   = engine_.lockMask();
+        s.step   = (int16_t)engine_.step();
+        s.tonic  = (int16_t)engine_.tonic();
+        s.scale  = (int16_t)engine_.scale();
+        s.len    = (int16_t)engine_.length();
         s.bpmX10 = (int16_t)estimateBpmX10();
-        s.mut   = engine_.mutatedThisClock() ? 1 : 0;
+        s.mut    = engine_.mutatedThisClock() ? 1 : 0;
         shared::publishLive(s);
-    }
-
-    void publishFullSnapshot() {
-        FullState fs;
-        fs.version     = kPersistVersion;
-        fs.config      = config_;
-        fs.reg         = engine_.reg();
-        fs.lockMask    = engine_.lockMask();
-        fs.scale       = engine_.scale();
-        fs.lengthIndex = engine_.lengthIndex();
-        fs.tonic       = engine_.tonic();
-        for (int s = 0; s < kNumScales; ++s) {
-            for (int i = 0; i < k2BitTableLen; ++i) fs.table2[s][i] = engine_.table2_[s][i];
-            for (int i = 0; i < k4BitTableLen; ++i) fs.table4[s][i] = engine_.table4_[s][i];
-        }
-        shared::publishFull(fs);
-        // keep the live frame in sync too
-        publishLiveSnapshot();
     }
 
     int estimateBpmX10() {
         if (clockPeriod_ <= 0) return 0;
         // Treat each incoming pulse as a beat: BPM = 60 * fs / period.
         long v = (60L * kSampleRate * 10L) / clockPeriod_;
-        if (v > 99990) v = 99990;
+        if (v > 30000) v = 30000;   // keep well inside int16 for the snapshot
         return (int)v;
     }
 };
 
 // ===========================================================================
-// core1 - USB CDC (raw TinyUSB)
+// core1 - USB CDC (raw TinyUSB) + authoritative table/config mirror
 // ===========================================================================
+
+// core1's authoritative copy of tables + config. All edits arrive over USB on
+// this core, so it can answer "hello" state dumps and build flash saves
+// without ever asking the audio core for more than the tiny live snapshot.
+// Seeded from g_boot before core1 launches.
+static PersistState g_mirror;
+
 static char     g_line[160];
 static uint32_t g_lineLen = 0;
 static bool     g_drop = false;
 static uint32_t g_lastLiveSeq = 0;
+static shared::LiveSnap g_lastLive;   // latest good snapshot (valid from boot)
+static bool     g_helloPending = false;
+
+// Push a command to core0, waiting briefly if the ring is full (it only fills
+// while core0 is parked, e.g. during a flash save). Keeps USB serviced.
+static void pushCmdBlocking(const shared::CmdMsg &m) {
+    if (shared::pushCmd(m)) return;
+    absolute_time_t deadline = make_timeout_time_ms(600);
+    while (!shared::pushCmd(m)) {
+        if (absolute_time_diff_us(get_absolute_time(), deadline) < 0) return; // give up
+        tud_task();
+    }
+}
+
+// Refresh g_lastLive from the seqlock; returns true if a snapshot was read.
+static bool refreshLive() {
+    shared::LiveSnap s; uint32_t seq;
+    if (!shared::readLive(s, seq)) return false;
+    g_lastLive = s;
+    g_lastLiveSeq = seq;
+    return true;
+}
 
 // Write a possibly-large buffer to CDC, chunked, servicing USB between chunks so
 // we never overflow the 256-byte TX FIFO or send a truncated line.
@@ -413,27 +447,35 @@ static void cdcWriteAll(const char *s, int len) {
     }
 }
 
+// Assemble the full state dump from the core1 mirror + the live snapshot.
 static void sendStateDump() {
     if (!tud_cdc_connected()) return;
-    FullState fs; uint32_t seq;
-    if (!shared::readFull(fs, seq)) return;
+    refreshLive(); // best effort; g_lastLive is valid since boot either way
+
+    FullState fs;
+    fs.version  = kPersistVersion;
+    fs.config   = g_mirror.config;
+    fs.reg      = g_lastLive.reg;
+    fs.lockMask = g_lastLive.lock;
+    fs.scale    = g_lastLive.scale;
+    fs.length   = g_lastLive.len;      // ACTUAL progression length (2..8)
+    fs.tonic    = g_lastLive.tonic;
+    for (int s = 0; s < kNumScales; ++s) {
+        for (int i = 0; i < k2BitTableLen; ++i) fs.table2[s][i] = g_mirror.table2[s][i];
+        for (int i = 0; i < k4BitTableLen; ++i) fs.table4[s][i] = g_mirror.table4[s][i];
+    }
+
     static char big[4608];
     int len = buildStateDump(big, sizeof(big), fs);
     if (len > 0) cdcWriteAll(big, len);
 }
 
 static void doSave() {
-    FullState fs; uint32_t seq;
-    if (!shared::readFull(fs, seq)) return;
-    PersistState ps;
-    ps.config   = fs.config;
-    ps.reg      = fs.reg;
-    ps.lockMask = fs.lockMask;
-    for (int s = 0; s < kNumScales; ++s) {
-        for (int i = 0; i < k2BitTableLen; ++i) ps.table2[s][i] = fs.table2[s][i];
-        for (int i = 0; i < k4BitTableLen; ++i) ps.table4[s][i] = fs.table4[s][i];
-    }
-    bool ok = savePersistToFlash(ps);
+    refreshLive();
+    PersistState ps = g_mirror;         // tables + config (authoritative here)
+    ps.reg      = g_lastLive.reg;       // register + locks live on core0
+    ps.lockMask = g_lastLive.lock;
+    bool ok = savePersistToFlash(ps);   // parks core0 briefly (audio pause)
     char ack[48];
     int n = snprintf(ack, sizeof(ack), "{\"c\":\"saved\",\"ok\":%s}\n", ok ? "true" : "false");
     if (n > 0) cdcWriteAll(ack, n);
@@ -442,23 +484,52 @@ static void doSave() {
 static void dispatch(const ParsedCommand &pc) {
     using namespace shared;
     switch (pc.type) {
-    case CMD_HELLO: sendStateDump(); break;
+    case CMD_HELLO: g_helloPending = true; break;
     case CMD_SAVE:  doSave(); break;
-    case CMD_SETSTEP: { CmdMsg m{C_SETSTEP,(int16_t)pc.i,(int16_t)pc.v,0,0,0,0,0}; pushCmd(m); break; }
-    case CMD_LOCK:    { CmdMsg m{C_LOCK,(int16_t)pc.i,(int16_t)(pc.on?1:0),0,0,0,0,0}; pushCmd(m); break; }
-    case CMD_TABLE:   { CmdMsg m{C_TABLE,(int16_t)pc.scale,(int16_t)pc.mode,(int16_t)pc.slot,
-                                 (int16_t)pc.deg,(int16_t)pc.ctype,(int16_t)pc.inv,(int16_t)pc.oct}; pushCmd(m); break; }
-    case CMD_RANDOMIZE: { CmdMsg m{C_RANDOMIZE,0,0,0,0,0,0,0}; pushCmd(m); break; }
-    case CMD_RESET:     { CmdMsg m{C_RESET,0,0,0,0,0,0,0}; pushCmd(m); break; }
-    case CMD_LOADDEFAULTS: { CmdMsg m{C_DEFAULTS,0,0,0,0,0,0,0}; pushCmd(m); break; }
+    case CMD_SETSTEP: { CmdMsg m{C_SETSTEP,(int16_t)pc.i,(int16_t)pc.v,0,0,0,0,0}; pushCmdBlocking(m); break; }
+    case CMD_LOCK:    { CmdMsg m{C_LOCK,(int16_t)pc.i,(int16_t)(pc.on?1:0),0,0,0,0,0}; pushCmdBlocking(m); break; }
+    case CMD_TABLE: {
+        // Update the mirror (bounds-checked), then forward to the engine.
+        if (pc.scale >= 0 && pc.scale < kNumScales) {
+            ChordDef d = {(uint8_t)pc.deg, (uint8_t)pc.ctype, (int8_t)pc.inv, (int8_t)pc.oct};
+            if (pc.mode == 2 && pc.slot >= 0 && pc.slot < k2BitTableLen)
+                g_mirror.table2[pc.scale][pc.slot] = d;
+            else if (pc.mode == 4 && pc.slot >= 0 && pc.slot < k4BitTableLen)
+                g_mirror.table4[pc.scale][pc.slot] = d;
+            else break;
+            CmdMsg m{C_TABLE,(int16_t)pc.scale,(int16_t)pc.mode,(int16_t)pc.slot,
+                     (int16_t)pc.deg,(int16_t)pc.ctype,(int16_t)pc.inv,(int16_t)pc.oct};
+            pushCmdBlocking(m);
+        }
+        break;
+    }
+    case CMD_RANDOMIZE: { CmdMsg m{C_RANDOMIZE,0,0,0,0,0,0,0}; pushCmdBlocking(m); break; }
+    case CMD_RESET:     { CmdMsg m{C_RESET,0,0,0,0,0,0,0}; pushCmdBlocking(m); break; }
+    case CMD_LOADDEFAULTS: {
+        for (int s = 0; s < kNumScales; ++s) {
+            for (int i = 0; i < k2BitTableLen; ++i) g_mirror.table2[s][i] = kDefault2Bit[s][i];
+            for (int i = 0; i < k4BitTableLen; ++i) g_mirror.table4[s][i] = kDefault4Bit[s][i];
+        }
+        CmdMsg m{C_DEFAULTS,0,0,0,0,0,0,0};
+        pushCmdBlocking(m);
+        break;
+    }
     case CMD_CFG: {
-        if (pc.hasDiv)     { CmdMsg m{C_CFG,CF_DIV,(int16_t)pc.div,0,0,0,0,0}; pushCmd(m); }
-        if (pc.hasArp)     { CmdMsg m{C_CFG,CF_ARP,(int16_t)pc.arp,0,0,0,0,0}; pushCmd(m); }
-        if (pc.hasPadEn)   { CmdMsg m{C_CFG,CF_PADEN,(int16_t)pc.padEn,0,0,0,0,0}; pushCmd(m); }
-        if (pc.hasPadWave) { CmdMsg m{C_CFG,CF_PADWAVE,(int16_t)pc.padWave,0,0,0,0,0}; pushCmd(m); }
-        if (pc.hasPadDet)  { CmdMsg m{C_CFG,CF_PADDET,(int16_t)pc.padDet,0,0,0,0,0}; pushCmd(m); }
-        if (pc.hasPadCut)  { CmdMsg m{C_CFG,CF_PADCUT,(int16_t)pc.padCut,0,0,0,0,0}; pushCmd(m); }
-        if (pc.hasPadWid)  { CmdMsg m{C_CFG,CF_PADWID,(int16_t)pc.padWid,0,0,0,0,0}; pushCmd(m); }
+        struct { bool has; int field; int val; } fields[] = {
+            {pc.hasDiv,     CF_DIV,     pc.div},
+            {pc.hasArp,     CF_ARP,     pc.arp},
+            {pc.hasPadEn,   CF_PADEN,   pc.padEn},
+            {pc.hasPadWave, CF_PADWAVE, pc.padWave},
+            {pc.hasPadDet,  CF_PADDET,  pc.padDet},
+            {pc.hasPadCut,  CF_PADCUT,  pc.padCut},
+            {pc.hasPadWid,  CF_PADWID,  pc.padWid},
+        };
+        for (auto &f : fields) {
+            if (!f.has) continue;
+            sanitizeCfgField(g_mirror.config, f.field, f.val);
+            CmdMsg m{C_CFG,(int16_t)f.field,(int16_t)f.val,0,0,0,0,0};
+            pushCmdBlocking(m);
+        }
         break;
     }
     default: break;
@@ -491,19 +562,20 @@ static void pollCdcInput() {
 
 static void sendLive() {
     if (!tud_cdc_connected()) return;
-    shared::LiveSnap s; uint32_t seq;
-    if (!shared::readLive(s, seq)) return;
-    if (seq == g_lastLiveSeq) return;
-    char buf[160];
+    uint32_t prevSeq = g_lastLiveSeq;
+    if (!refreshLive()) return;
+    if (g_lastLiveSeq == prevSeq && prevSeq != 0) return;   // nothing new
+    char buf[192];
     LiveInfo li;
-    li.reg = s.reg; li.step = s.step; li.tonic = s.tonic; li.scale = s.scale;
-    li.len = s.len; li.bpmX10 = s.bpmX10; li.mut = s.mut != 0;
+    li.reg = g_lastLive.reg; li.lock = g_lastLive.lock;
+    li.step = g_lastLive.step; li.tonic = g_lastLive.tonic;
+    li.scale = g_lastLive.scale; li.len = g_lastLive.len;
+    li.bpmX10 = g_lastLive.bpmX10; li.mut = g_lastLive.mut != 0;
     int len = buildLiveFrame(buf, sizeof(buf), li);
     if (len <= 0) return;
-    if (tud_cdc_write_available() < (uint32_t)len) return; // try again next round
+    if (tud_cdc_write_available() < (uint32_t)len) return;  // try again next round
     tud_cdc_write(buf, (uint32_t)len);
     tud_cdc_write_flush();
-    g_lastLiveSeq = seq;
 }
 
 static void core1Main() {
@@ -513,6 +585,10 @@ static void core1Main() {
     while (true) {
         tud_task();
         pollCdcInput();
+        if (g_helloPending && tud_cdc_connected()) {
+            g_helloPending = false;
+            sendStateDump();
+        }
         uint32_t now = to_ms_since_boot(get_absolute_time());
         if ((uint32_t)(now - lastPushMs) >= kPushIntervalMs) {
             sendLive();
@@ -524,11 +600,14 @@ static void core1Main() {
 int main() {
     set_sys_clock_khz(144000, true);         // 3 x 48 MHz: low audio-input noise
 
-    ChordLoopCard card;                      // constructed on core0 (flash/EEPROM/I2C)
+    if (!loadPersistFromFlash(g_boot)) loadDefaultPersist(g_boot);
+    g_mirror = g_boot;                       // seed core1's mirror before launch
+
+    ChordLoopCard card(g_boot);              // constructed on core0 (flash/EEPROM/I2C)
     card.EnableNormalisationProbe();         // jack detection for CV1/CV2 defaults
 
+    flash_safe_execute_core_init();          // register core0 as flash-lockout victim
     multicore_launch_core1(core1Main);       // USB on core1
-    flash_safe_execute_core_init();          // register core0 as flash lockout victim
 
     card.Run();                              // 48 kHz audio DSP on core0 (never returns)
     return 0;

@@ -106,9 +106,9 @@ bool parseCommand(const char *line, ParsedCommand &out) {
 
 int buildLiveFrame(char *buf, size_t n, const LiveInfo &li) {
     int len = snprintf(buf, n,
-        "{\"c\":\"live\",\"reg\":%u,\"step\":%d,\"tonic\":%d,\"scale\":%d,"
+        "{\"c\":\"live\",\"reg\":%u,\"lock\":%u,\"step\":%d,\"tonic\":%d,\"scale\":%d,"
         "\"len\":%d,\"bpm\":%d.%d,\"mut\":%s}\n",
-        (unsigned)li.reg, li.step, li.tonic, li.scale, li.len,
+        (unsigned)li.reg, (unsigned)li.lock, li.step, li.tonic, li.scale, li.len,
         li.bpmX10 / 10, li.bpmX10 % 10, li.mut ? "true" : "false");
     if (len < 0 || (size_t)len >= n) return 0;
     return len;
@@ -127,7 +127,7 @@ int buildStateDump(char *buf, size_t n, const FullState &fs) {
         "\"lock\":%u,\"tonic\":%d,"
         "\"cfg\":{\"div\":%u,\"arp\":%u,\"padEn\":%u,\"padWave\":%u,"
         "\"padDet\":%u,\"padCut\":%u,\"padWid\":%u},",
-        fs.version, fs.scale, fs.lengthIndex, (unsigned)fs.reg,
+        fs.version, fs.scale, fs.length, (unsigned)fs.reg,
         (unsigned)fs.lockMask, fs.tonic,
         fs.config.chordClockDiv, fs.config.arpPatternOverride,
         fs.config.padEnabled, fs.config.padWaveform,

@@ -50,6 +50,7 @@ bool parseCommand(const char *line, ParsedCommand &out);
 // Compact live frame, ~10 Hz. Returns bytes written (excluding NUL), or 0.
 struct LiveInfo {
     uint16_t reg;
+    uint16_t lock;                 // per-step lock mask (card truth)
     int step, tonic, scale, len, bpmX10;
     bool mut;
 };
@@ -60,7 +61,7 @@ struct FullState {
     uint16_t version;
     Config   config;
     uint16_t reg, lockMask;
-    int      scale, lengthIndex, tonic;
+    int      scale, length, tonic; // length = ACTUAL step count (2..8)
     ChordDef table2[kNumScales][k2BitTableLen];
     ChordDef table4[kNumScales][k4BitTableLen];
 };

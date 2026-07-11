@@ -343,10 +343,15 @@ function onState(o){
   setDirty(false);
 }
 let flashUntil=0;
+let lastLockTouch=-1e9;   // when the user last clicked a lock (card echo grace)
 function onLive(o){
   state.reg=o.reg>>>0; state.step=o.step; state.tonic=o.tonic;
   state.scale=o.scale; state.len=o.len;
   state.bpmX10 = Math.round((o.bpm||0)*10);
+  // Live frames carry the card's true lock mask. Trust it except right after a
+  // local click, whose command may not have round-tripped yet.
+  if(typeof o.lock==="number" && performance.now()-lastLockTouch>400)
+    state.lock=o.lock>>>0;
   if(o.mut) flashUntil = performance.now()+380;
   scheduleRender();
 }
@@ -392,6 +397,7 @@ function makeStepCell(i){
   d.querySelector(".lock").addEventListener("click",()=>{
     const on=(((state.lock>>>i)&1)===0);
     if(on) state.lock|=(1<<i); else state.lock&=~(1<<i);
+    lastLockTouch=performance.now();
     send({c:"lock",i,on}); scheduleRender();
   });
   return d;

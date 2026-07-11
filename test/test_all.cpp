@@ -300,12 +300,27 @@ static void test_serial() {
     CHECK(!parseCommand("{\"c\":\"bogus\"}", pc), "reject unknown command");
 
     // live frame builds and is well-formed
-    char buf[160];
-    LiveInfo li; li.reg = 43690; li.step = 3; li.tonic = 60; li.scale = 0; li.len = 8; li.bpmX10 = 1204; li.mut = false;
+    char buf[192];
+    LiveInfo li; li.reg = 43690; li.lock = 5; li.step = 3; li.tonic = 60; li.scale = 0; li.len = 8; li.bpmX10 = 1204; li.mut = false;
     int n = buildLiveFrame(buf, sizeof(buf), li);
     CHECK(n > 0, "live frame builds");
-    CHECK(strstr(buf, "\"reg\":43690") && strstr(buf, "\"bpm\":120.4") && strstr(buf, "\"mut\":false"),
-          "live frame contains expected fields");
+    CHECK(strstr(buf, "\"reg\":43690") && strstr(buf, "\"lock\":5") &&
+          strstr(buf, "\"bpm\":120.4") && strstr(buf, "\"mut\":false"),
+          "live frame contains expected fields incl lock");
+
+    // state dump: "len" must be the ACTUAL progression length, not an index
+    // (regression: v1.0.0 sent lengthIndex, so the UI showed 4 steps for 8)
+    static char big[4608];
+    FullState fs;
+    fs.version = 1; fs.config = defaultConfig();
+    fs.reg = 0xACE1; fs.lockMask = 0; fs.scale = 0; fs.length = 8; fs.tonic = 48;
+    for (int s = 0; s < kNumScales; ++s) {
+        for (int i = 0; i < k2BitTableLen; ++i) fs.table2[s][i] = kDefault2Bit[s][i];
+        for (int i = 0; i < k4BitTableLen; ++i) fs.table4[s][i] = kDefault4Bit[s][i];
+    }
+    int dn = buildStateDump(big, sizeof(big), fs);
+    CHECK(dn > 0, "state dump builds");
+    CHECK(strstr(big, "\"len\":8") != nullptr, "state dump reports actual length (8)");
 }
 
 int main() {

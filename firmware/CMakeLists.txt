@@ -38,6 +38,13 @@ target_compile_options(chordloop PRIVATE -Wall -Wextra -Wdouble-promotion -Wfloa
 # Some boards need extra time for the crystal oscillator to start.
 target_compile_definitions(chordloop PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
 
+# Run the entire binary from RAM. ProcessSample() has a hard ~3000-cycle budget
+# at 144 MHz; XIP cache misses on the (cold) chord-clock path were enough to
+# overrun it, which scrambles ComputerCard's ADC mux sequencing - knobs, switch
+# and CV inputs all misread. ~90 KB total fits RAM comfortably, and it also
+# means the audio core never touches flash while core1 writes settings.
+pico_set_binary_type(chordloop copy_to_ram)
+
 target_link_libraries(chordloop
     pico_stdlib
     pico_multicore        # USB stack runs on core1

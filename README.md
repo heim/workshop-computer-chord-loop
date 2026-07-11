@@ -211,6 +211,17 @@ easy tweaking.
 
 ## Notes & v1 deviations
 
+- **The binary runs from RAM** (`copy_to_ram`). `ProcessSample()` has a hard
+  ~3000-cycle budget at 144 MHz; XIP cache misses on the cold chord-clock path
+  could overrun it, which degrades ComputerCard's ADC-mux sequencing so knob,
+  switch and CV readings bleed into each other (phantom switch-down randomise,
+  stuck knobs, tonic jumps). Running from RAM removes flash stalls entirely; the
+  audio ISR also only ever hands core 1 a ~20-byte snapshot.
+- **Momentary-down randomise is debounced** (10 ms of solid *Down*), and a CV
+  jack must read as connected for 50 ms before its input is trusted, so
+  normalisation-probe flicker can't fake a tonic or arp-pattern change.
+- **Save pauses the audio briefly** (~0.1–0.4 s): writing the flash sector
+  parks the audio core via `flash_safe_execute`. Save is explicit and rare.
 - **Tonic CV scaling** (`kCvCountsPerVolt` in `settings.h`) is a nominal value
   for the *uncalibrated* CV input (~341 counts/V ≈ ±6 V). The quantiser snaps to
   the nearest semitone, which absorbs small errors; tweak the constant if bench

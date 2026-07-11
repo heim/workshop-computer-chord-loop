@@ -111,14 +111,16 @@ void ChordEngine::setLengthIndex(int li) {
 //   knob fully CW  -> p = 0 (locked loop)
 //   knob at noon   -> p = 1 (constant variation)
 //   knob fully CCW -> p = 0 (locked; "double length" flag set, see README)
-// A small dead-band at each extreme guarantees a truly locked loop there (p==0
+// A dead-band at each extreme guarantees a truly locked loop there (p==0
 // exactly), rather than the ~1-in-2000 residual a bare triangle would leave.
+// 96 counts (~2.3% of travel) also absorbs knobs that do not quite reach the
+// end of their electrical range, plus ADC noise.
 void ChordEngine::setProbabilityKnob(int32_t k) {
     if (k < 0) k = 0;
     if (k > 4095) k = 4095;
     int dist = k - 2048;
     if (dist < 0) dist = -dist;              // 0..2048
-    const int active = 2048 - 64;            // 64-count locked dead-band per end
+    const int active = 2048 - 96;            // 96-count locked dead-band per end
     pQ_ = ((active - dist) * 4096) / active; // 4096 at noon, 0 by the dead-band
     if (pQ_ < 0) pQ_ = 0;
     if (pQ_ > 4096) pQ_ = 4096;
